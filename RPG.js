@@ -1,13 +1,24 @@
-const dzmmReady = new Promise((resolve) => {
+// DZMM Ready Promise（由 HTML 提供）
+// 如果独立运行，创建兜底 Promise
+if (!window.dzmmReady) {
+  window.dzmmReady = new Promise((resolve) => {
+    try {
+      if (window.dzmm && typeof window.dzmm.completions === 'function') {
+        resolve();
+        return;
+      }
+    } catch (_) {}
     window.addEventListener('message', function handler(event) {
       if (event.data?.type === 'dzmm:ready') {
         window.removeEventListener('message', handler);
         resolve();
       }
-});
-});
+    });
+  });
+}
+const dzmmReady = window.dzmmReady;
 
-  const SAVE_KEY = 'rpg_adventure_save_v2';
+const SAVE_KEY = 'rpg_adventure_save_v2';
 
   // 抽象名词黑名单（不允许作为道具）
   const ABSTRACT_ITEM_BLOCKLIST = ['情报','线索','传闻','消息','信息','知识','心情','灵感'];
