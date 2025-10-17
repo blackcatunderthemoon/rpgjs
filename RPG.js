@@ -167,6 +167,28 @@ const dzmmReady = new Promise((resolve) => {
     };
   };
 
+  // ==================== 解析辅助 ====================
+  function extractBracketArrays(input){
+    if(!input) return [];
+    return Array.from(String(input).matchAll(/\[[\s\S]*?\]/g)).map(m=>m[0]);
+  }
+  function sanitizeJsonArrayString(s){
+    let t = String(s);
+    // 修复常见错误："text","xxx" => "text":"xxx"
+    t = t.replace(/"text"\s*,\s*"/g, '"text":"');
+    // 修复数组元素间多余引号：},"{ => },{
+    t = t.replace(/},\s*"\s*\{/g, '},{');
+    // 去除结尾多余逗号
+    t = t.replace(/,\s*\]/g, ']');
+    // 去掉围栏符
+    t = t.replace(/```[\s\S]*?```/g, '');
+    return t.trim();
+  }
+  function tryParseJsonArray(s){
+    try{ return JSON.parse(s); }catch(_){ /* ignore */ }
+    try{ return JSON.parse(sanitizeJsonArrayString(s)); }catch(_){ return null; }
+  }
+
   // ==================== 怪物数据库 ====================
   const MONSTERS = {
     // 魔物型 (无智能)
@@ -871,15 +893,16 @@ document.addEventListener('alpine:init', () => {
               if(done){
                 this.messages.push({ role:'assistant', content: text });
                 try{
-                  // 尝试提取JSON（可能混在其他文本中）
-                  let jsonText = text.trim();
-                  // 如果有方括号，提取方括号内的内容
-                  const match = jsonText.match(/\[[\s\S]*\]/);
-                  if(match) jsonText = match[0];
-                  
-                  const arr = JSON.parse(jsonText);
+                  // 尝试提取多个 JSON 数组，优先挑选最后一个可解析的
+                  const candidates = extractBracketArrays(text);
+                  let parsed = null;
+                  for(let i=candidates.length-1;i>=0;i--){
+                    const arr = tryParseJsonArray(candidates[i]);
+                    if(Array.isArray(arr)){ parsed = arr; break; }
+                  }
+                  if(!parsed){ throw new Error('no valid options array'); }
                   const keys=['A','B','C'];
-                  this.openOptions = (arr||[]).slice(0,3).map((x,i)=>({ key: x.key||keys[i], text: String(x.text||'探索周围') }));
+                  this.openOptions = parsed.slice(0,3).map((x,i)=>({ key: x?.key||keys[i], text: String(x?.text||'探索周围') }));
                 }catch(e){
                   console.warn('选项JSON解析失败，使用兜底', e, text);
                   this.openOptions = [
@@ -901,10 +924,14 @@ document.addEventListener('alpine:init', () => {
                 if(done){ 
                   this.messages.push({role:'assistant', content:text}); 
                   try{ 
-                    let jsonText = text.trim();
-                    const match = jsonText.match(/\[[\s\S]*\]/);
-                    if(match) jsonText = match[0];
-                    this.openOptions = JSON.parse(jsonText).slice(0,3);
+                    const candidates = extractBracketArrays(text);
+                    let parsed = null;
+                    for(let i=candidates.length-1;i>=0;i--){
+                      const arr = tryParseJsonArray(candidates[i]);
+                      if(Array.isArray(arr)){ parsed = arr; break; }
+                    }
+                    if(!parsed) throw new Error('no valid options array');
+                    this.openOptions = parsed.slice(0,3);
                   }catch(e){
                     this.openOptions = [
                       {key:'A', text:'观察周围'},
@@ -1283,11 +1310,17 @@ document.addEventListener('alpine:init', () => {
         const si = text.indexOf(S); if(si===-1) return null;
         const ei = text.indexOf(E, si+S.length); if(ei===-1) return null;
         const raw = text.slice(si+S.length, ei).trim();
-        try{
-          const arr = JSON.parse(raw);
-          console.log('🧪 [EFFECTS] 解析成功:', arr);
-          return Array.isArray(arr) ? arr : null;
-        }catch(err){ console.warn('EFFECTS 解析失败', err, raw); return null; }
+        // 直接尝试解析
+        let arr = tryParseJsonArray(raw);
+        if(Array.isArray(arr)) { console.log('🧪 [EFFECTS] 解析成功:', arr); return arr; }
+        // 若失败，从片段里提取可能的数组，取最后一个可解析的
+        const candidates = extractBracketArrays(raw);
+        for(let i=candidates.length-1;i>=0;i--){
+          const parsed = tryParseJsonArray(candidates[i]);
+          if(Array.isArray(parsed)){ console.log('🧪 [EFFECTS] 解析(容错)成功'); return parsed; }
+        }
+        console.warn('EFFECTS 解析失败', raw);
+        return null;
       },
 
       stripEffectsFromText(text){
